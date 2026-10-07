@@ -18,7 +18,6 @@
   p { margin:0 0 16px; color:var(--suave); }
   label { display:block; font-size:.9rem; margin-bottom:6px; }
   input { width:100%; font:inherit; padding:12px; border:1px solid var(--borde); border-radius:10px; background:transparent; color:var(--texto); margin-bottom:14px; }
-  input.codigo { letter-spacing:.3em; text-align:center; font-size:1.3rem; }
   button { width:100%; font:inherit; font-weight:600; padding:12px; border-radius:10px; border:0; cursor:pointer; background:var(--acento); color:var(--tarjeta); }
   button.secundario { background:transparent; color:var(--texto); border:1px solid var(--borde); margin-top:10px; }
   button:disabled { opacity:.6; cursor:wait; }
@@ -45,18 +44,13 @@
     <form id="form-email">
       <label for="email">Correo</label>
       <input id="email" type="email" autocomplete="email" required>
-      <button>Enviarme un código</button>
+      <button>Enviarme un enlace</button>
     </form>
   </section>
 
   <section id="paso-codigo" hidden>
-    <p>Te he enviado un código a <strong id="email-enviado"></strong>.</p>
-    <form id="form-codigo">
-      <label for="codigo">Código</label>
-      <input id="codigo" class="codigo" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" required>
-      <button>Entrar</button>
-      <button type="button" class="secundario" id="otro-email">Usar otro correo</button>
-    </form>
+    <p>Te he enviado un enlace a <strong id="email-enviado"></strong>. Ábrelo <strong>en este mismo navegador</strong> y volverás aquí para aprobar.</p>
+    <button type="button" class="secundario" id="otro-email">Usar otro correo</button>
   </section>
 
   <section id="paso-aprobar" hidden>
@@ -79,6 +73,8 @@
   const supabase = createClient(
     'https://idelmquhhidznnxuvznm.supabase.co',
     'sb_publishable_fipEnGWZ4AQaRd7Gej1tSw_bpOk7Wds',
+    // implicit: la sesión llega en el propio enlace del correo
+    { auth: { flowType: 'implicit', detectSessionInUrl: true } },
   )
   const PERMITIDOS = ['marcjornetverge@gmail.com']
   const id = new URLSearchParams(location.search).get('authorization_id')
@@ -98,6 +94,8 @@
   }
 
   async function pedirAprobacion() {
+    await supabase.auth.getSession() // espera a que se lea la sesión del enlace
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search)
     const { data: c } = await supabase.auth.getClaims()
     const email = c?.claims?.email
     if (!email) return mostrar('paso-email')
@@ -121,24 +119,11 @@
     const email = $('email').value.trim().toLowerCase()
     ocupado(ev.submitter, async () => {
       if (!PERMITIDOS.includes(email)) throw new Error('Este correo no tiene acceso a este Cerebro.')
-      const { error: e } = await supabase.auth.signInWithOtp({ email })
+      // El enlace vuelve a esta misma página, con el authorization_id
+      const { error: e } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href.split('#')[0] } })
       if (e) throw e
       $('email-enviado').textContent = email
       mostrar('paso-codigo')
-      $('codigo').focus()
-    })
-  })
-
-  $('form-codigo').addEventListener('submit', (ev) => {
-    ev.preventDefault()
-    ocupado(ev.submitter, async () => {
-      const { error: e } = await supabase.auth.verifyOtp({
-        email: $('email-enviado').textContent,
-        token: $('codigo').value.trim(),
-        type: 'email',
-      })
-      if (e) throw e
-      await pedirAprobacion()
     })
   })
 
