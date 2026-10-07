@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Acceso al Cerebro</title>
+<style>
+  :root { --fondo:#f6f5f2; --tarjeta:#fff; --texto:#1d1c1a; --suave:#6b6862; --borde:#e2dfd8; --acento:#3d5a80; --peligro:#9b2c2c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fondo:#161615; --tarjeta:#201f1d; --texto:#ecebe7; --suave:#a09d96; --borde:#34322e; --acento:#8fb0d8; --peligro:#e08585; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px;
+         background:var(--fondo); color:var(--texto); font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { width:100%; max-width:420px; background:var(--tarjeta); border:1px solid var(--borde); border-radius:14px; padding:28px 24px; }
+  h1 { font-size:1.25rem; margin:0 0 4px; }
+  p { margin:0 0 16px; color:var(--suave); }
+  label { display:block; font-size:.9rem; margin-bottom:6px; }
+  input { width:100%; font:inherit; padding:12px; border:1px solid var(--borde); border-radius:10px; background:transparent; color:var(--texto); margin-bottom:14px; }
+  input.codigo { letter-spacing:.3em; text-align:center; font-size:1.3rem; }
+  button { width:100%; font:inherit; font-weight:600; padding:12px; border-radius:10px; border:0; cursor:pointer; background:var(--acento); color:var(--tarjeta); }
+  button.secundario { background:transparent; color:var(--texto); border:1px solid var(--borde); margin-top:10px; }
+  button:disabled { opacity:.6; cursor:wait; }
+  dl { margin:0 0 20px; padding:14px; border:1px solid var(--borde); border-radius:10px; font-size:.92rem; }
+  dt { color:var(--suave); font-size:.8rem; }
+  dd { margin:0 0 8px; word-break:break-all; }
+  dd:last-child { margin-bottom:0; }
+  .error { color:var(--peligro); margin-top:14px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🧠 Cerebro de Marc</h1>
+
+  <section id="cargando"><p>Cargando…</p></section>
+
+  <section id="sin-peticion" hidden>
+    <p>Esta página se abre sola cuando conectas el Cerebro desde claude.ai u otra app. No hay nada que aprobar.</p>
+  </section>
+
+  <section id="paso-email" hidden>
+    <p>Inicia sesión para dar acceso a tu segundo cerebro.</p>
+    <form id="form-email">
+      <label for="email">Correo</label>
+      <input id="email" type="email" autocomplete="email" required>
+      <button>Enviarme un código</button>
+    </form>
+  </section>
+
+  <section id="paso-codigo" hidden>
+    <p>Te he enviado un código a <strong id="email-enviado"></strong>.</p>
+    <form id="form-codigo">
+      <label for="codigo">Código</label>
+      <input id="codigo" class="codigo" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" required>
+      <button>Entrar</button>
+      <button type="button" class="secundario" id="otro-email">Usar otro correo</button>
+    </form>
+  </section>
+
+  <section id="paso-aprobar" hidden>
+    <p><strong id="cliente"></strong> quiere leer tu segundo cerebro (solo lectura; lo sensible solo si lo pide expresamente).</p>
+    <dl>
+      <dt>Volverá a</dt><dd id="redireccion"></dd>
+      <dt>Sesión</dt><dd id="usuario"></dd>
+    </dl>
+    <button id="aprobar">Aprobar</button>
+    <button class="secundario" id="denegar">Denegar</button>
+  </section>
+
+  <p class="error" id="error" hidden></p>
+</main>
+
+<script type="module">
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
+
+  // Clave pública (publishable): está pensada para ir en el navegador.
+  const supabase = createClient(
+    'https://idelmquhhidznnxuvznm.supabase.co',
+    'sb_publishable_fipEnGWZ4AQaRd7Gej1tSw_bpOk7Wds',
+  )
+  const PERMITIDOS = ['marcjornetverge@gmail.com']
+  const id = new URLSearchParams(location.search).get('authorization_id')
+  const $ = (s) => document.getElementById(s)
+
+  function mostrar(seccion) {
+    for (const s of ['cargando', 'sin-peticion', 'paso-email', 'paso-codigo', 'paso-aprobar']) $(s).hidden = s !== seccion
+  }
+  function error(msg) {
+    $('error').textContent = msg
+    $('error').hidden = !msg
+  }
+  async function ocupado(boton, fn) {
+    boton.disabled = true
+    error('')
+    try { await fn() } catch (e) { error(e.message || String(e)) } finally { boton.disabled = false }
+  }
+
+  async function pedirAprobacion() {
+    const { data: c } = await supabase.auth.getClaims()
+    const email = c?.claims?.email
+    if (!email) return mostrar('paso-email')
+    if (!PERMITIDOS.includes(email.toLowerCase())) {
+      await supabase.auth.signOut()
+      mostrar('paso-email')
+      return error(`${email} no tiene acceso a este Cerebro.`)
+    }
+    const { data, error: e } = await supabase.auth.oauth.getAuthorizationDetails(id)
+    if (e) { mostrar('paso-aprobar'); $('aprobar').hidden = $('denegar').hidden = true; return error(e.message) }
+    // Si ya se aprobó antes, Supabase devuelve directamente a dónde volver
+    if (!('authorization_id' in data)) return location.assign(data.redirect_url)
+    $('cliente').textContent = data.client?.name || data.client?.client_name || 'Una app'
+    $('redireccion').textContent = data.redirect_uri
+    $('usuario').textContent = email
+    mostrar('paso-aprobar')
+  }
+
+  $('form-email').addEventListener('submit', (ev) => {
+    ev.preventDefault()
+    const email = $('email').value.trim().toLowerCase()
+    ocupado(ev.submitter, async () => {
+      if (!PERMITIDOS.includes(email)) throw new Error('Este correo no tiene acceso a este Cerebro.')
+      const { error: e } = await supabase.auth.signInWithOtp({ email })
+      if (e) throw e
+      $('email-enviado').textContent = email
+      mostrar('paso-codigo')
+      $('codigo').focus()
+    })
+  })
+
+  $('form-codigo').addEventListener('submit', (ev) => {
+    ev.preventDefault()
+    ocupado(ev.submitter, async () => {
+      const { error: e } = await supabase.auth.verifyOtp({
+        email: $('email-enviado').textContent,
+        token: $('codigo').value.trim(),
+        type: 'email',
+      })
+      if (e) throw e
+      await pedirAprobacion()
+    })
+  })
+
+  $('otro-email').addEventListener('click', () => { error(''); mostrar('paso-email') })
+
+  $('aprobar').addEventListener('click', (ev) => ocupado(ev.currentTarget, async () => {
+    const { data, error: e } = await supabase.auth.oauth.approveAuthorization(id)
+    if (e) throw e
+    location.assign(data.redirect_url)
+  }))
+
+  $('denegar').addEventListener('click', (ev) => ocupado(ev.currentTarget, async () => {
+    const { data, error: e } = await supabase.auth.oauth.denyAuthorization(id)
+    if (e) throw e
+    location.assign(data.redirect_url)
+  }))
+
+  if (!id) mostrar('sin-peticion')
+  else pedirAprobacion().catch((e) => { mostrar('paso-email'); error(e.message) })
+</script>
+</body>
+</html>
