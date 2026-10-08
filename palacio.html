@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Palacio de la memoria</title>
+<style>
+  :root { --fondo:#f6f5f2; --tarjeta:#fff; --texto:#1d1c1a; --suave:#6b6862; --borde:#e2dfd8; --acento:#3d5a80; --peligro:#9b2c2c; --camino:#d98e04; --lienzo:#101114; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fondo:#161615; --tarjeta:#201f1d; --texto:#ecebe7; --suave:#a09d96; --borde:#34322e; --acento:#8fb0d8; --peligro:#e08585; --camino:#f2b43a; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; }
+  body { background:var(--lienzo); color:var(--texto); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; overflow:hidden; }
+  [hidden] { display:none !important; }
+  .caja { background:var(--tarjeta); border:1px solid var(--borde); border-radius:14px; }
+  #acceso { position:fixed; inset:0; display:grid; place-items:center; padding:16px; background:var(--fondo); }
+  #acceso main { width:100%; max-width:420px; padding:28px 24px; }
+  h1 { font-size:1.25rem; margin:0 0 4px; }
+  p { margin:0 0 16px; color:var(--suave); }
+  input, select { font:inherit; padding:9px 10px; border:1px solid var(--borde); border-radius:10px; background:var(--tarjeta); color:var(--texto); min-width:0; }
+  #acceso input { width:100%; margin-bottom:14px; }
+  button { font:inherit; font-weight:600; padding:9px 12px; border-radius:10px; border:0; cursor:pointer; background:var(--acento); color:var(--tarjeta); }
+  button.sec { background:transparent; color:var(--texto); border:1px solid var(--borde); }
+  #acceso button { width:100%; padding:12px; }
+  .error { color:var(--peligro); }
+  #grafo { position:fixed; inset:0; }
+  #barra { position:fixed; top:12px; left:12px; right:12px; display:flex; flex-wrap:wrap; gap:8px; padding:10px; align-items:center; z-index:2; }
+  #barra input[type=search] { flex:1 1 180px; }
+  #barra label { display:flex; align-items:center; gap:6px; font-size:.85rem; color:var(--suave); flex:1 1 220px; }
+  #barra input[type=range] { flex:1; padding:0; }
+  #cuenta { font-size:.8rem; color:var(--suave); }
+  #panel { position:fixed; top:84px; right:12px; bottom:12px; width:min(440px, calc(100% - 24px)); padding:18px; overflow:auto; z-index:3; }
+  #panel h2 { font-size:1.1rem; margin:0 0 2px; padding-right:32px; }
+  #panel .meta { font-size:.8rem; color:var(--suave); margin-bottom:12px; word-break:break-all; }
+  #panel .cuerpo { white-space:pre-wrap; word-wrap:break-word; font-size:.92rem; }
+  #panel .cuerpo a, #vecinos a { color:var(--acento); cursor:pointer; text-decoration:underline; }
+  #vecinos { font-size:.88rem; margin:0 0 12px; padding-left:18px; }
+  #cerrar { position:absolute; top:12px; right:12px; padding:4px 10px; }
+  #cargando { position:fixed; inset:0; display:grid; place-items:center; color:#bbb; }
+  @media (max-width: 700px) {
+    #panel { top:auto; left:12px; height:55vh; width:auto; }
+  }
+</style>
+</head>
+<body>
+
+<section id="acceso" hidden>
+  <main class="caja">
+    <h1>🏛️ Palacio de la memoria</h1>
+    <div id="paso-email">
+      <p>Inicia sesión para recorrer tu segundo cerebro.</p>
+      <form id="form-email">
+        <input id="email" type="email" autocomplete="email" placeholder="Correo" required>
+        <button>Enviarme un enlace</button>
+      </form>
+    </div>
+    <p id="paso-enviado" hidden>Te he enviado un enlace. Ábrelo <strong>en este mismo navegador</strong>.</p>
+    <p class="error" id="error-acceso" hidden></p>
+  </main>
+</section>
+
+<div id="cargando">Cargando el palacio…</div>
+<div id="grafo"></div>
+
+<div id="barra" class="caja" hidden>
+  <input type="search" id="buscar" list="titulos" placeholder="Buscar una nota…" aria-label="Buscar una nota">
+  <datalist id="titulos"></datalist>
+  <select id="area" aria-label="Área"><option value="">Todas las áreas</option></select>
+  <select id="paseo" aria-label="Paseo"><option value="">Sin paseo</option></select>
+  <label>Hasta <input type="range" id="tiempo" min="0" max="100" value="100" aria-label="Fecha"> <span id="fecha-tiempo"></span></label>
+  <button class="sec" id="dim" title="Cambiar entre 3D y 2D">2D</button>
+  <span id="cuenta"></span>
+</div>
+
+<aside id="panel" class="caja" hidden>
+  <button class="sec" id="cerrar" aria-label="Cerrar">✕</button>
+  <h2 id="p-titulo"></h2>
+  <div class="meta" id="p-meta"></div>
+  <ul id="vecinos"></ul>
+  <div class="cuerpo" id="p-cuerpo"></div>
+</aside>
+
+<script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
+<script type="module">
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm'
+
+  // Clave pública (publishable): está pensada para ir en el navegador. Los datos solo salen con la sesión de Marc.
+  const BASE = 'https://idelmquhhidznnxuvznm.supabase.co'
+  const supabase = createClient(BASE, 'sb_publishable_fipEnGWZ4AQaRd7Gej1tSw_bpOk7Wds',
+    { auth: { flowType: 'implicit', detectSessionInUrl: true } })
+  const PERMITIDOS = ['marcjornetverge@gmail.com']
+  const API = `${BASE}/functions/v1/cerebro/grafo`
+  const $ = (s) => document.getElementById(s)
+  const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+
+  let token, G, datos, nodos = new Map(), porNombre = new Map(), vecinos = new Map()
+  let filtro = { area: '', hasta: Infinity }, camino = new Set(), aristasCamino = new Set(), seleccion = null
+
+  // ---------- Acceso ----------
+  function acceso(msg) {
+    $('cargando').hidden = true
+    $('acceso').hidden = false
+    $('error-acceso').textContent = msg || ''
+    $('error-acceso').hidden = !msg
+  }
+  $('form-email').addEventListener('submit', async (ev) => {
+    ev.preventDefault()
+    const email = $('email').value.trim().toLowerCase()
+    if (!PERMITIDOS.includes(email)) return acceso('Este correo no tiene acceso.')
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href.split('#')[0] } })
+    if (error) return acceso(error.message)
+    $('paso-email').hidden = true
+    $('paso-enviado').hidden = false
+  })
+
+  async function pedir(url) {
+    const r = await fetch(url, { headers: { authorization: `Bearer ${token}` } })
+    if (r.status === 401) { await supabase.auth.signOut(); acceso('La sesión ha caducado. Vuelve a entrar.'); throw new Error('401') }
+    if (!r.ok) throw new Error(`Error ${r.status}`)
+    return r.json()
+  }
+
+  // ---------- Colores ----------
+  const PALETA = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#76b7b2', '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#86bcb6']
+  const colorArea = new Map()
+  function color(n) {
+    if (camino.size) return camino.has(n.id) ? '#f2b43a' : '#3a3d44'
+    if (seleccion && n.id !== seleccion && !vecinos.get(seleccion)?.has(n.id)) return '#3a3d44'
+    const clave = n.area || n.carpeta
+    if (!colorArea.has(clave)) colorArea.set(clave, PALETA[colorArea.size % PALETA.length])
+    return colorArea.get(clave)
+  }
+  const visible = (n) => (!filtro.area || n.area === filtro.area) && (!n.fecha || Date.parse(n.fecha) <= filtro.hasta)
+  const extremo = (x) => (typeof x === 'object' ? x.id : x)
+  const enlaceVisible = (l) => visible(nodos.get(extremo(l.source))) && visible(nodos.get(extremo(l.target)))
+
+  // ---------- Grafo ----------
+  async function cargar() {
+    datos = await pedir(API)
+    for (const n of datos.nodos) {
+      nodos.set(n.id, n)
+      porNombre.set(n.id.split('/').pop().replace(/\.md$/i, '').toLowerCase(), n.id)
+      vecinos.set(n.id, new Set())
+    }
+    for (const a of datos.aristas) { vecinos.get(a.source).add(a.target); vecinos.get(a.target).add(a.source) }
+
+    const areas = [...new Set(datos.nodos.map((n) => n.area).filter(Boolean))].sort()
+    $('area').innerHTML += areas.map((a) => `<option>${esc(a)}</option>`).join('')
+    $('titulos').innerHTML = datos.nodos.map((n) => `<option value="${esc(n.titulo)}">`).join('')
+    const paseos = datos.nodos.filter((n) => n.origen === 'palacio' && n.citadas?.length)
+      .sort((a, b) => (b.fecha ?? '').localeCompare(a.fecha ?? ''))
+    $('paseo').innerHTML += paseos.map((n) => `<option value="${esc(n.id)}">${esc(n.titulo)}</option>`).join('')
+    if (!paseos.length) $('paseo').hidden = true
+
+    const fechas = datos.nodos.map((n) => Date.parse(n.fecha)).filter((f) => !isNaN(f))
+    const min = Math.min(...fechas), max = Math.max(...fechas)
+    $('tiempo').oninput = () => {
+      const v = +$('tiempo').value
+      filtro.hasta = v >= 100 ? Infinity : min + (max - min) * v / 100
+      $('fecha-tiempo').textContent = v >= 100 ? 'hoy' : new Date(filtro.hasta).toLocaleDateString('es-ES')
+      refrescar()
+    }
+    $('fecha-tiempo').textContent = 'hoy'
+
+    G = ForceGraph3D()($('grafo'))
+      .backgroundColor('#101114')
+      .nodeId('id')
+      .nodeLabel((n) => `${n.sensibilidad === 'sensible' ? '🔒 ' : ''}${esc(n.titulo)}${n.resumen ? `<br><small>${esc(n.resumen)}</small>` : ''}`)
+      .nodeVal((n) => 1 + (vecinos.get(n.id)?.size ?? 0))
+      .nodeColor(color)
+      .nodeVisibility(visible)
+      .linkVisibility(enlaceVisible)
+      .linkColor((l) => (l.camino ? '#f2b43a' : '#6b6f78'))
+      .linkWidth((l) => (l.camino ? 2.5 : 0))
+      .linkOpacity(0.35)
+      .linkDirectionalParticles((l) => (l.camino ? 4 : 0))
+      .linkDirectionalParticleWidth(2.5)
+      .onNodeClick((n) => abrir(n.id))
+      .onBackgroundClick(() => { seleccion = null; refrescar() })
+      .graphData({ nodes: datos.nodos, links: [...datos.aristas] })
+    addEventListener('resize', () => G.width(innerWidth).height(innerHeight))
+
+    $('cargando').hidden = true
+    $('barra').hidden = false
+    refrescar()
+  }
+
+  function refrescar() {
+    const { nodes, links } = G.graphData()
+    const base = links.filter((l) => !l.camino)
+    const extra = [...aristasCamino].map((par) => { const [s, t] = par.split('\u0000'); return { source: s, target: t, camino: true } })
+    if (extra.length || base.length !== links.length) G.graphData({ nodes, links: [...base, ...extra] })
+    // funciones nuevas para que el grafo vuelva a evaluarlas
+    G.nodeColor((n) => color(n)).nodeVisibility((n) => visible(n)).linkVisibility((l) => enlaceVisible(l))
+    $('cuenta').textContent = `${nodes.filter(visible).length} notas`
+  }
+
+  function volar(id) {
+    const n = G.graphData().nodes.find((x) => x.id === id)
+    if (!n || n.x === undefined) return
+    const d = 90, r = 1 + d / Math.hypot(n.x || 1, n.y || 1, n.z || 1)
+    G.cameraPosition({ x: n.x * r, y: n.y * r, z: (n.z ?? 0) * r }, n, 1200)
+  }
+
+  async function abrir(id) {
+    seleccion = id
+    refrescar()
+    volar(id)
+    const n = nodos.get(id)
+    $('panel').hidden = false
+    $('p-titulo').textContent = (n.sensibilidad === 'sensible' ? '🔒 ' : '') + n.titulo
+    $('p-meta').textContent = [n.ruta ?? id, n.tipo, n.fecha?.slice(0, 10)].filter(Boolean).join(' · ')
+    $('vecinos').innerHTML = [...(vecinos.get(id) ?? [])].slice(0, 20)
+      .map((v) => `<li><a data-id="${esc(v)}">${esc(nodos.get(v)?.titulo ?? v)}</a></li>`).join('')
+    $('p-cuerpo').textContent = 'Cargando…'
+    try {
+      const nota = await pedir(`${API}/nota?ruta=${encodeURIComponent(id)}`)
+      // [[enlaces]] navegables, solo a notas que están en el grafo
+      $('p-cuerpo').innerHTML = esc(nota.contenido).replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (m, nombre, alias) => {
+        const destino = porNombre.get(nombre.trim().toLowerCase())
+        return destino ? `<a data-id="${esc(destino)}">${alias ?? nombre}</a>` : (alias ?? nombre)
+      })
+    } catch (e) { $('p-cuerpo').textContent = e.message }
+  }
+
+  document.addEventListener('click', (ev) => { const a = ev.target.closest('a[data-id]'); if (a) abrir(a.dataset.id) })
+  $('cerrar').onclick = () => { $('panel').hidden = true; seleccion = null; refrescar() }
+  $('area').onchange = () => { filtro.area = $('area').value; refrescar() }
+  $('buscar').onchange = () => {
+    const q = $('buscar').value.trim().toLowerCase()
+    const n = datos.nodos.find((x) => x.titulo.toLowerCase() === q) ?? datos.nodos.find((x) => x.titulo.toLowerCase().includes(q))
+    if (n) abrir(n.id)
+  }
+  $('paseo').onchange = () => {
+    const p = nodos.get($('paseo').value)
+    camino = new Set(), aristasCamino = new Set()
+    if (p) {
+      const pasos = [p.id, ...p.citadas]
+      pasos.forEach((id) => camino.add(id))
+      for (let i = 1; i < pasos.length; i++) aristasCamino.add(`${pasos[i - 1]}\u0000${pasos[i]}`)
+    }
+    refrescar()
+    if (p) abrir(p.id)
+  }
+  $('dim').onclick = () => {
+    const tres = $('dim').textContent === '2D'
+    G.numDimensions(tres ? 2 : 3)
+    $('dim').textContent = tres ? '3D' : '2D'
+  }
+
+  // ---------- Arranque ----------
+  try {
+    const { data } = await supabase.auth.getSession()
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search)
+    const email = data.session?.user?.email?.toLowerCase()
+    if (!email) acceso()
+    else if (!PERMITIDOS.includes(email)) { await supabase.auth.signOut(); acceso(`${email} no tiene acceso.`) }
+    else { token = data.session.access_token; await cargar() }
+  } catch (e) { if (e.message !== '401') acceso(e.message) }
+  supabase.auth.onAuthStateChange((_, s) => { if (s) token = s.access_token })
+</script>
+</body>
+</html>
