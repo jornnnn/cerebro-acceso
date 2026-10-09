@@ -38,6 +38,17 @@
   #panel .cuerpo a, #vecinos a { color:var(--acento); cursor:pointer; text-decoration:underline; }
   #vecinos { font-size:.88rem; margin:0 0 12px; padding-left:18px; }
   #cerrar { position:absolute; top:12px; right:12px; padding:4px 10px; }
+  #leyenda { position:fixed; left:12px; bottom:12px; z-index:2; padding:8px 12px; font-size:.82rem; max-height:45vh; overflow:auto; max-width:min(280px, calc(100% - 24px)); }
+  #leyenda summary { cursor:pointer; font-weight:600; color:var(--suave); }
+  #leyenda ul { list-style:none; margin:6px 0 0; padding:0; }
+  #leyenda li { display:flex; align-items:center; gap:8px; padding:2px 4px; border-radius:6px; cursor:pointer; }
+  #leyenda li:hover { background:var(--borde); }
+  #leyenda li.apagada { opacity:.35; }
+  #leyenda li.fija { cursor:default; }
+  #leyenda li.fija:hover { background:none; }
+  #leyenda .punto { width:11px; height:11px; border-radius:50%; flex:none; }
+  #leyenda .n { margin-left:auto; color:var(--suave); font-variant-numeric:tabular-nums; }
+  #leyenda hr { border:0; border-top:1px solid var(--borde); margin:6px 0; }
   #cargando { position:fixed; inset:0; display:grid; place-items:center; color:#bbb; }
   @media (max-width: 700px) {
     #panel { top:auto; left:12px; height:55vh; width:auto; }
@@ -73,6 +84,17 @@
   <button class="sec" id="dim" title="Cambiar entre 3D y 2D">2D</button>
   <span id="cuenta"></span>
 </div>
+
+<details id="leyenda" class="caja" hidden open>
+  <summary>Leyenda</summary>
+  <ul id="ley-areas"></ul>
+  <hr>
+  <ul>
+    <li class="fija"><span class="punto" style="background:#f2b43a"></span>Camino del paseo</li>
+    <li class="fija"><span class="punto" style="background:#3a3d44"></span>Fuera de la selección</li>
+    <li class="fija"><span>🔒</span>Nota sensible (en el título)</li>
+  </ul>
+</details>
 
 <aside id="panel" class="caja" hidden>
   <button class="sec" id="cerrar" aria-label="Cerrar">✕</button>
@@ -130,14 +152,27 @@
   // ---------- Colores ----------
   const PALETA = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#76b7b2', '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#86bcb6']
   const colorArea = new Map()
+  const clave = (n) => n.area || n.carpeta || 'Sin área'
   function color(n) {
     if (camino.size) return camino.has(n.id) ? '#f2b43a' : '#3a3d44'
     if (seleccion && n.id !== seleccion && !vecinos.get(seleccion)?.has(n.id)) return '#3a3d44'
-    const clave = n.area || n.carpeta
-    if (!colorArea.has(clave)) colorArea.set(clave, PALETA[colorArea.size % PALETA.length])
-    return colorArea.get(clave)
+    return colorArea.get(clave(n)) ?? '#6b6f78'
   }
-  const visible = (n) => (!filtro.area || n.area === filtro.area) && (!n.fecha || Date.parse(n.fecha) <= filtro.hasta)
+  // Color fijo por área (las más grandes primero) y su leyenda; clic en una para filtrar
+  function leyenda() {
+    const cuenta = new Map()
+    for (const n of datos.nodos) cuenta.set(clave(n), (cuenta.get(clave(n)) ?? 0) + 1)
+    const orden = [...cuenta].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    orden.forEach(([k], i) => colorArea.set(k, PALETA[i % PALETA.length]))
+    $('ley-areas').innerHTML = orden.map(([k, c]) =>
+      `<li data-area="${esc(k)}" title="Ver solo ${esc(k)}"><span class="punto" style="background:${colorArea.get(k)}"></span>${esc(k)}<span class="n">${c}</span></li>`).join('')
+    if (matchMedia('(max-width: 700px)').matches) $('leyenda').open = false
+    $('leyenda').hidden = false
+  }
+  function marcarLeyenda() {
+    for (const li of $('ley-areas').children) li.classList.toggle('apagada', !!filtro.area && li.dataset.area !== filtro.area)
+  }
+  const visible = (n) => (!filtro.area || clave(n) === filtro.area) && (!n.fecha || Date.parse(n.fecha) <= filtro.hasta)
   const extremo = (x) => (typeof x === 'object' ? x.id : x)
   const enlaceVisible = (l) => visible(nodos.get(extremo(l.source))) && visible(nodos.get(extremo(l.target)))
 
@@ -152,6 +187,7 @@
     for (const a of datos.aristas) { vecinos.get(a.source).add(a.target); vecinos.get(a.target).add(a.source) }
 
     const areas = [...new Set(datos.nodos.map((n) => n.area).filter(Boolean))].sort()
+    leyenda()
     $('area').innerHTML += areas.map((a) => `<option>${esc(a)}</option>`).join('')
     $('titulos').innerHTML = datos.nodos.map((n) => `<option value="${esc(n.titulo)}">`).join('')
     const paseos = datos.nodos.filter((n) => n.origen === 'palacio' && n.citadas?.length)
@@ -200,6 +236,7 @@
     // funciones nuevas para que el grafo vuelva a evaluarlas
     G.nodeColor((n) => color(n)).nodeVisibility((n) => visible(n)).linkVisibility((l) => enlaceVisible(l))
     $('cuenta').textContent = `${nodes.filter(visible).length} notas`
+    marcarLeyenda()
   }
 
   function volar(id) {
@@ -233,6 +270,14 @@
   document.addEventListener('click', (ev) => { const a = ev.target.closest('a[data-id]'); if (a) abrir(a.dataset.id) })
   $('cerrar').onclick = () => { $('panel').hidden = true; seleccion = null; refrescar() }
   $('area').onchange = () => { filtro.area = $('area').value; refrescar() }
+  $('ley-areas').onclick = (ev) => {
+    const li = ev.target.closest('li[data-area]')
+    if (!li) return
+    filtro.area = filtro.area === li.dataset.area ? '' : li.dataset.area
+    // el desplegable solo tiene áreas; si es una carpeta sin área se queda en «Todas»
+    $('area').value = [...$('area').options].some((o) => o.value === filtro.area) ? filtro.area : ''
+    refrescar()
+  }
   $('buscar').onchange = () => {
     const q = $('buscar').value.trim().toLowerCase()
     const n = datos.nodos.find((x) => x.titulo.toLowerCase() === q) ?? datos.nodos.find((x) => x.titulo.toLowerCase().includes(q))
