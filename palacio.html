@@ -115,9 +115,14 @@
     $('paso-enviado').hidden = false
   })
 
-  async function pedir(url) {
+  async function pedir(url, renovada = false) {
     const r = await fetch(url, { headers: { authorization: `Bearer ${token}` } })
-    if (r.status === 401) { await supabase.auth.signOut(); acceso('La sesión ha caducado. Vuelve a entrar.'); throw new Error('401') }
+    if (r.status === 401) {
+      // Se renueva el token y se repite una vez. Sin signOut(): cerraba la sesión también en el panel y en los demás dispositivos
+      const { data } = renovada ? {} : await supabase.auth.refreshSession()
+      if (data?.session) { token = data.session.access_token; return pedir(url, true) }
+      acceso('La sesión ha caducado. Vuelve a entrar.'); throw new Error('401')
+    }
     if (!r.ok) throw new Error(`Error ${r.status}`)
     return r.json()
   }
@@ -256,7 +261,7 @@
     if (location.hash) history.replaceState(null, '', location.pathname + location.search)
     const email = data.session?.user?.email?.toLowerCase()
     if (!email) acceso()
-    else if (!PERMITIDOS.includes(email)) { await supabase.auth.signOut(); acceso(`${email} no tiene acceso.`) }
+    else if (!PERMITIDOS.includes(email)) { await supabase.auth.signOut({ scope: 'local' }); acceso(`${email} no tiene acceso.`) }
     else { token = data.session.access_token; await cargar() }
   } catch (e) { if (e.message !== '401') acceso(e.message) }
   supabase.auth.onAuthStateChange((_, s) => { if (s) token = s.access_token })
